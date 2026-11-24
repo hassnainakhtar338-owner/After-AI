@@ -1,0 +1,6 @@
+{
+  "name": "After AI",
+  "description": "After AI by Hassnain Akhtar CEO of HA Developers — Responsive multimodal AI workspace powered by Gemini 4 Hydrogen, Coding Agent, Agnes AI Image Studio, TTS, and Audio Transcription.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

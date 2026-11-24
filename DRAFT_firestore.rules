@@ -1,0 +1,305 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidChatModel(model) {
+      return model is string
+        && model.size() >= 1
+        && model.size() <= 64
+        && model in ['gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-4-neon', 'gemini-3.1-flash-lite'];
+    }
+
+    function isValidImageModel(model) {
+      return model is string
+        && model.size() >= 1
+        && model.size() <= 64
+        && model in ['agnes-image-2.5-flash', 'agnes-image-2.1-flash', 'agnes-image-2.0-flash'];
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data, userId) {
+      return data.uid is string
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 100
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && isValidChatModel(data.preferredModel)
+        && data.theme is string
+        && data.theme in ['light', 'dark']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatSession(data, userId, chatId) {
+      return data.id is string
+        && isValidId(data.id)
+        && data.id == chatId
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && isValidChatModel(data.model)
+        && data.systemInstruction is string
+        && data.systemInstruction.size() <= 2000
+        && data.messageCount is int
+        && data.messageCount >= 0
+        && data.messageCount <= 10000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMapsLinks(links) {
+      return links is list
+        && links.size() <= 10
+        && (links.size() == 0 || (
+          links[0] is map
+          && links[0].keys().hasAll(['title', 'uri'])
+          && links[0].keys().hasOnly(['title', 'uri'])
+          && links[0].title is string
+          && links[0].title.size() <= 200
+          && links[0].uri is string
+          && links[0].uri.size() <= 600
+        ));
+    }
+
+    function isValidChatMessage(data, userId, chatId, messageId) {
+      return data.id is string
+        && isValidId(data.id)
+        && data.id == messageId
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.chatId is string
+        && isValidId(data.chatId)
+        && data.chatId == chatId
+        && data.role is string
+        && data.role in ['user', 'assistant']
+        && data.content is string
+        && data.content.size() >= 1
+        && data.content.size() <= 60000
+        && data.model is string
+        && data.model.size() >= 1
+        && data.model.size() <= 64
+        && data.thinkingUsed is bool
+        && (!('mapsLinks' in data) || isValidMapsLinks(data.mapsLinks))
+        && (!('attachmentLabel' in data) || (data.attachmentLabel is string && data.attachmentLabel.size() <= 200))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidImageCreation(data, userId, creationId) {
+      return data.id is string
+        && isValidId(data.id)
+        && data.id == creationId
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.prompt is string
+        && data.prompt.size() >= 1
+        && data.prompt.size() <= 2000
+        && isValidImageModel(data.model)
+        && data.aspectRatio is string
+        && data.aspectRatio in ['1:1', '3:4', '4:3', '9:16', '16:9', '1:4', '1:8', '4:1', '8:1']
+        && data.imageSize is string
+        && data.imageSize in ['1K', '2K', '4K']
+        && data.mode is string
+        && data.mode in ['generate', 'edit']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAgentArtifact(data, userId, artifactId) {
+      return data.id is string
+        && isValidId(data.id)
+        && data.id == artifactId
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.category is string
+        && data.category in ['auto', 'app', 'website', 'game2d']
+        && data.prompt is string
+        && data.prompt.size() >= 1
+        && data.prompt.size() <= 2000
+        && data.summary is string
+        && data.summary.size() <= 8000
+        && data.html is string
+        && data.html.size() >= 1
+        && data.html.size() <= 250000
+        && data.model is string
+        && data.model.size() >= 1
+        && data.model.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && incoming().keys().hasAll(['uid', 'displayName', 'preferredModel', 'theme', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['uid', 'displayName', 'photoURL', 'preferredModel', 'theme', 'createdAt', 'updatedAt'])
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'preferredModel', 'theme', 'updatedAt'])
+        );
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // Chat sessions subcollection
+      match /chats/{chatId} {
+        allow get: if isValidId(userId) && isValidId(chatId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(chatId)
+          && isOwner(userId)
+          && incoming().keys().hasAll(['id', 'userId', 'title', 'model', 'systemInstruction', 'messageCount', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'userId', 'title', 'model', 'systemInstruction', 'messageCount', 'createdAt', 'updatedAt'])
+          && isValidChatSession(incoming(), userId, chatId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(chatId)
+          && isOwner(userId)
+          && isValidChatSession(incoming(), userId, chatId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'model', 'systemInstruction', 'messageCount', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(chatId) && isOwner(userId);
+
+        // Chat messages subcollection (Master Gate checks parent chat ownership)
+        match /messages/{messageId} {
+          allow get: if isValidId(userId)
+            && isValidId(chatId)
+            && isValidId(messageId)
+            && isOwner(userId)
+            && get(/databases/$(database)/documents/users/$(userId)/chats/$(chatId)).data.userId == request.auth.uid;
+
+          allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+          allow create: if isValidId(userId)
+            && isValidId(chatId)
+            && isValidId(messageId)
+            && isOwner(userId)
+            && incoming().keys().hasAll(['id', 'userId', 'chatId', 'role', 'content', 'model', 'thinkingUsed', 'createdAt'])
+            && incoming().keys().hasOnly(['id', 'userId', 'chatId', 'role', 'content', 'model', 'thinkingUsed', 'mapsLinks', 'attachmentLabel', 'createdAt'])
+            && isValidChatMessage(incoming(), userId, chatId, messageId)
+            && incoming().createdAt == request.time
+            && exists(/databases/$(database)/documents/users/$(userId)/chats/$(chatId))
+            && get(/databases/$(database)/documents/users/$(userId)/chats/$(chatId)).data.userId == request.auth.uid;
+
+          allow update: if false;
+
+          allow delete: if isValidId(userId)
+            && isValidId(chatId)
+            && isValidId(messageId)
+            && isOwner(userId);
+        }
+      }
+
+      // Image Studio creations log subcollection
+      match /creations/{creationId} {
+        allow get: if isValidId(userId) && isValidId(creationId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(creationId)
+          && isOwner(userId)
+          && incoming().keys().hasAll(['id', 'userId', 'prompt', 'model', 'aspectRatio', 'imageSize', 'mode', 'createdAt'])
+          && incoming().keys().hasOnly(['id', 'userId', 'prompt', 'model', 'aspectRatio', 'imageSize', 'mode', 'createdAt'])
+          && isValidImageCreation(incoming(), userId, creationId)
+          && incoming().createdAt == request.time;
+
+        allow update: if false;
+
+        allow delete: if isValidId(userId) && isValidId(creationId) && isOwner(userId);
+      }
+
+      // Coding Agent HTML artifacts subcollection
+      match /artifacts/{artifactId} {
+        allow get: if isValidId(userId) && isValidId(artifactId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(artifactId)
+          && isOwner(userId)
+          && incoming().keys().hasAll(['id', 'userId', 'title', 'category', 'prompt', 'summary', 'html', 'model', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'userId', 'title', 'category', 'prompt', 'summary', 'html', 'model', 'createdAt', 'updatedAt'])
+          && isValidAgentArtifact(incoming(), userId, artifactId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isValidId(userId)
+          && isValidId(artifactId)
+          && isOwner(userId)
+          && isValidAgentArtifact(incoming(), userId, artifactId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'prompt', 'summary', 'html', 'model', 'updatedAt'])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(artifactId) && isOwner(userId);
+      }
+    }
+  }
+}
